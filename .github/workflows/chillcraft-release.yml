@@ -1,0 +1,125 @@
+# Fork release (Chillcraft). Manual: Actions → "Chillcraft Release" → Run workflow, picking the
+# chillcraft/* branch to publish. Creates the tag <minecraft>-<backpacked>+gravestones.<revision> on
+# the built commit and a release with the jar. Upstream's build.yml (v* tags) is not triggered.
+name: Chillcraft Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Our own revision on top of the upstream version (1, 2, ...)'
+        required: true
+        default: '1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chillcraft-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate input and compute version
+        id: version
+        env:
+          REF: ${{ github.ref }}
+          REVISION: ${{ inputs.revision }}
+          GPR_USER: ${{ secrets.GPR_USER }}
+          GPR_KEY: ${{ secrets.GPR_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != refs/heads/chillcraft/* ]]; then
+            echo "::error::Only chillcraft/* branches can be released (got $REF)"; exit 1
+          fi
+          if [[ ! "$REVISION" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Revision must be a positive integer (got '$REVISION')"; exit 1
+          fi
+          if [[ -z "$GPR_USER" || -z "$GPR_KEY" ]]; then
+            echo "::error::Missing GPR_USER / GPR_KEY secrets (classic token with read:packages)"; exit 1
+          fi
+          prop() { grep -E "^$1=" gradle.properties | cut -d= -f2- | tr -d '\r'; }
+          mc=$(prop minecraft_version)
+          mod=$(prop mod_version)
+          tag="${mc}-${mod}+gravestones.${REVISION}"
+          if gh release view "$tag" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists; use another revision"; exit 1
+          fi
+          {
+            echo "mc=$mc"
+            echo "mod=$mod"
+            echo "tag=$tag"
+            echo "jar=backpacked-fabric-${mc}-${mod}-gravestones-integration.jar"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # Caches ~/.gradle and validates gradle-wrapper.jar.
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Generates recipes, loot tables and block tags (fabric/src/generated, not versioned).
+      # Without this step the jar ships with no recipes.
+      - name: Datagen (Fabric)
+        env:
+          GPR_USER: ${{ secrets.GPR_USER }}
+          GPR_KEY: ${{ secrets.GPR_KEY }}
+          TARGET_LOADER: fabric
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :fabric:runDatagen
+
+      - name: Build (Fabric)
+        env:
+          GPR_USER: ${{ secrets.GPR_USER }}
+          GPR_KEY: ${{ secrets.GPR_KEY }}
+          TARGET_LOADER: fabric
+        run: ./gradlew :fabric:build
+
+      - name: Prepare jar
+        env:
+          MC: ${{ steps.version.outputs.mc }}
+          MOD: ${{ steps.version.outputs.mod }}
+          JAR: ${{ steps.version.outputs.jar }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cp "fabric/build/libs/backpacked-fabric-${MC}-${MOD}.jar" "dist/$JAR"
+          if ! unzip -l "dist/$JAR" | grep -q 'data/backpacked/recipe/'; then
+            echo "::error::The jar contains no recipes; check the datagen step"; exit 1
+          fi
+          (cd dist && sha256sum "$JAR" > "$JAR.sha256")
+          cat "dist/$JAR.sha256"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          MC: ${{ steps.version.outputs.mc }}
+          MOD: ${{ steps.version.outputs.mod }}
+          JAR: ${{ steps.version.outputs.jar }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sha=$(cut -d' ' -f1 "dist/$JAR.sha256")
+          cat > notes.md <<EOF
+          Backpacked ${MOD} for Fabric ${MC}, with es_MX translation and Gravestones integration.
+          Built from \`${BRANCH}\` (${GITHUB_SHA}).
+
+          - **Requires:** Framework (see \`FORK.md\` for the minimum version).
+          - **SHA-256:** \`${sha}\`
+
+          Source code under LGPL 2.1; fork details in [FORK.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/FORK.md).
+          EOF
+          gh release create "$TAG" "dist/$JAR" "dist/$JAR.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file notes.md

@@ -56,15 +56,42 @@ From `D:\modpacks\backpacked-1.21.1\`, in PowerShell:
 
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Java\jdk-21"; $env:TARGET_LOADER = "fabric"
+.\gradlew :fabric:runDatagen
 .\gradlew :fabric:build
 ```
 
 - Requires JDK 21 and a *classic* GitHub token with `read:packages` in
   `~/.gradle/gradle.properties` (`gpr.user` / `gpr.key`). Without the token, Framework cannot be
   downloaded (401). **The token never goes in the repo.**
+- **`runDatagen` is required:** it generates recipes, loot tables and block tags into
+  `fabric/src/generated/` (not versioned). Without it the jar builds but ships with no recipes.
 - The first build takes ~7 minutes.
-- The jar is written to `fabric/build/libs/`. It is renamed with the variant suffix:
-  `backpacked-fabric-1.21.1-3.0.5-gravestones-integration.jar`, and published as a fork release.
+- The jar is written to `fabric/build/libs/`. Releases are produced by the workflow (see below), not
+  by hand.
+
+## Release
+
+Manual workflow `.github/workflows/chillcraft-release.yml` (*Chillcraft Release*). It only exists
+on `chillcraft/1.21.1`; `chillcraft/1.20.1` is obsolete and does not have it.
+
+1. *Actions → Chillcraft Release → Run workflow*. Under *Use workflow from* pick the
+   `chillcraft/1.21.1` branch; *revision* is `1` for the first release of an upstream version and is
+   incremented when the same version is published again (our own changes, no upstream change).
+2. The workflow runs datagen + build for `fabric`, checks that the jar contains recipes and creates
+   the tag `<minecraft>-<backpacked>+gravestones.<revision>` (e.g. `1.21.1-3.0.5+gravestones.1`) on
+   the built commit, with a release attaching
+   `backpacked-fabric-1.21.1-3.0.5-gravestones-integration.jar` and its `.sha256`.
+
+GitHub repository setup (one time):
+
+- **Actions enabled** (disabled by default on forks).
+- **Secrets** `GPR_USER` (GitHub username) and `GPR_KEY` (*classic* token with `read:packages`):
+  the Actions `GITHUB_TOKEN` cannot read MrCrayfish's packages.
+- **Default branch `chillcraft/1.21.1`:** GitHub only shows *Run workflow* for workflows that exist
+  on the default branch, and the Gradle cache is only saved from it.
+
+Upstream's `build.yml` runs on `v*` tags and would fail (it uses MrCrayfish's secrets and deletes the
+tag on failure); that is why the fork's tags do not start with `v`.
 
 **Runtime dependency:** `framework >= 0.13.10` for Fabric 1.21.1 (CurseForge only). Tested with
 Framework `0.13.11`.
