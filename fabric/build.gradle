@@ -24,6 +24,29 @@ repositories {
                 includeGroup "curse.maven"
             }
         }
+        maven {
+            name "Modrinth"
+            url "https://api.modrinth.com/maven"
+            content {
+                includeGroup "maven.modrinth"
+            }
+        }
+    }
+}
+
+// Gravestones publishes its jars built with a much newer Fabric Loom than this project uses, and
+// Loom refuses to consume those. Stripping the manifest, which is where the version marker lives,
+// makes the jar usable. Loom resolves its mod configurations while the project is being
+// configured, so this cannot be done from a task. Only the API classes are needed and the
+// dependency is compile only, so nothing from Gravestones ends up in the built mod.
+def gravestonesApiJar = layout.buildDirectory.file("integration/gravestones-api-${gravestones_version}.jar").get().asFile
+if(!gravestonesApiJar.exists()) {
+    def published = configurations.detachedConfiguration(
+        dependencies.create("maven.modrinth:pneumono_gravestones:${gravestones_version}")
+    ).singleFile
+    gravestonesApiJar.parentFile.mkdirs()
+    ant.zip(destfile: gravestonesApiJar) {
+        zipfileset(src: published, excludes: "META-INF/MANIFEST.MF")
     }
 }
 
@@ -42,6 +65,7 @@ dependencies {
 
     // Integrations
     modCompileOnly "curse.maven:youre-in-grave-danger-544912:6684160"
+    modCompileOnly files(gravestonesApiJar)
 }
 
 sourceSets.main.resources.srcDirs += "src/generated/resources"

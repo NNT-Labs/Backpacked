@@ -3,6 +3,7 @@ package com.mrcrayfish.backpacked;
 import com.mrcrayfish.backpacked.common.WanderingTraderEvents;
 import com.mrcrayfish.backpacked.common.backpack.loader.FabricBackpackLoader;
 import com.mrcrayfish.backpacked.core.ModPointOfInterests;
+import com.mrcrayfish.backpacked.integration.GravestonesSupport;
 import com.mrcrayfish.backpacked.integration.YoureInGraveDangerSupport;
 import com.mrcrayfish.backpacked.mixin.PoiTypesAccessor;
 import com.mrcrayfish.framework.FrameworkSetup;
@@ -45,6 +46,11 @@ public class Backpacked implements ModInitializer
         if(FabricLoader.getInstance().isModLoaded("yigd"))
         {
             YoureInGraveDangerSupport.init();
+        }
+
+        if(FabricLoader.getInstance().isModLoaded("gravestones"))
+        {
+            GravestonesSupport.init();
         }
     }
 }
